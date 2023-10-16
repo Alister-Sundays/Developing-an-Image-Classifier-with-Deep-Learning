@@ -62,11 +62,15 @@ indices = indices.cpu().numpy()[0]
 # Load category names mapping
 import json
 with open(args.category_names, 'r') as f:
-    cat_to_name = json.load(f)
+    cat_to_name = json.load(f, strict = False)
 
-# Map indices to class names
-class_names = [cat_to_name[str(model.class_to_idx[str(index)])] for index in indices]
+# Create a dictionary mapping from indices to classes
+idx_to_class = {x: y for y, x in model.class_to_idx.items()}
 
-# Print the top K predictions
+# Get top K class labels
+top_classes = [idx_to_class[x] for x in indices]
+
+# Print the top K predictions with class labels
 for i in range(args.top_k):
-    print(f"Top-{i+1} Prediction: {class_names[i]} (Class Index: {indices[i]}), Probability: {probabilities[i]:.3f}")
+    print(f"Top-{i+1} Prediction: {top_classes[i]} (Class Index: {indices[i]}), Probability: {probabilities[i]:.3f}")
+
