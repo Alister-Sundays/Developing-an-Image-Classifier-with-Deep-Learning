@@ -1,7 +1,6 @@
 import argparse
-from wsgiref import validate
 import torch
-from torch import args, nn, optim
+from torch import args,nn, optim
 from torchvision import datasets, transforms, models
 
 def parse_arguments():
@@ -25,9 +24,12 @@ def build_classifier(model, hidden_units, num_classes):
             nn.Linear(hidden_units, num_classes),
             nn.LogSoftmax(dim=1)
         )
+        model.classifier = classifier
     elif 'resnet' in args.arch:
-        # ResNet-like model architecture
-        classifier = nn.Sequential(
+        # ResNet model architecture
+        for param in model.parameters():
+            param.requires_grad = False
+        model.fc = nn.Sequential(
             nn.Linear(model.fc.in_features, hidden_units),
             nn.ReLU(),
             nn.Dropout(0.5),
@@ -37,11 +39,29 @@ def build_classifier(model, hidden_units, num_classes):
     else:
         raise ValueError(f"Unsupported architecture: {args.arch}")
     
-    model.classifier = classifier
+def build_optimizer(model, learning_rate):
+    if 'vgg' in args.arch:
+        optimizer = optim.Adam(model.classifier.parameters(), lr=learning_rate)
+    elif 'resnet' in args.arch:
+        optimizer = optim.Adam(model.fc.parameters(), lr=learning_rate)
+    else:
+        raise ValueError(f"Unsupported architecture: {args.arch}")
+    return optimizer
+
+def validate(model, validloader, criterion, device):
+    model.eval()
+    accuracy = 0
+    with torch.no_grad():
+        for inputs, labels in validloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs, 1)
+            accuracy += (predicted == labels).sum().item()
+    return accuracy / len(validloader.dataset)
 
 def main():
     args = parse_arguments()
-    
+
     train_transforms = transforms.Compose([
         transforms.RandomRotation(30),
         transforms.RandomResizedCrop(224),
@@ -49,12 +69,12 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
-    
+
     train_data = datasets.ImageFolder(args.data_dir + '/train', transform=train_transforms)
     valid_data = datasets.ImageFolder(args.data_dir + '/valid', transform=train_transforms)
     trainloader = torch.utils.data.DataLoader(train_data, batch_size=64, shuffle=True)
     validloader = torch.utils.data.DataLoader(valid_data, batch_size=64)
-    
+
     if 'vgg' in args.arch:
         model = getattr(models, args.arch)(pretrained=True)
     elif 'resnet' in args.arch:
@@ -62,17 +82,14 @@ def main():
     else:
         raise ValueError(f"Unsupported architecture: {args.arch}")
 
-    for param in model.parameters():
-        param.requires_grad = False
-
     build_classifier(model, args.hidden_units, len(train_data.class_to_idx))
-    
+
     device = torch.device("cuda" if args.gpu and torch.cuda.is_available() else "cpu")
-    
+
     criterion = nn.NLLLoss()
-    optimizer = optim.Adam(model.classifier.parameters(), lr=args.learning_rate)
+    optimizer = build_optimizer(model, args.learning_rate)
     model.to(device)
-    
+
     for epoch in range(args.epochs):
         model.train()
         running_loss = 0
@@ -89,8 +106,8 @@ def main():
 
             running_loss += loss.item()
 
-        print(f"Epoch {epoch+1}/{args.epochs} - Loss: {running_loss/len(trainloader):.4f}")
-        
+        print(f"Epoch {epoch + 1}/{args.epochs} - Loss: {running_loss / len(trainloader):.4f}")
+
         validation_accuracy = validate(model, validloader, criterion, device)
         print(f"Validation Accuracy: {validation_accuracy * 100:.2f}%")
 
